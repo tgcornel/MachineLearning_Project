@@ -1,0 +1,103 @@
+---
+title: "Machine Learning Course Project"
+author: "Thijs Cornelissen"
+date: "June 8, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+A model was built to predict the activity of a subject based on measurements from accelerometers. After training and optimizing a support vector machine, the performance was estimated using a test set. The estimated accuracy is 99.3%, with a 95% confidence interval of (99.0%, 99.5%).
+
+## Data Processing
+
+First we fix the random seed, such that the results in this report are reproducible.
+
+```{r message=FALSE}
+library(caret)
+library(e1071)
+set.seed(123)
+```
+
+Now we load the training data set. We remove the columns where more than 95% of the entries are missing.
+
+```{r cache=TRUE}
+data<-read.csv("pml-training.csv",na.strings=c("NA","","#DIV/0!"))
+isna<-apply(data,2,FUN=function(x) sum(is.na(x))/length(x))
+data<-data[,-which(isna>.95)]
+```
+
+We use the `nearZeroVar` function to remove the variables with little or no variability.
+
+```{r cache=TRUE}
+removeidx<-nearZeroVar(data)
+data<-data[,-removeidx]
+```
+
+We also remove the variables corresponding to subject name and time, as we do not want to train on those variables.
+
+```{r cache=TRUE}
+data<-data[,-c(1,2,3,4,5)]
+```
+
+Now we split the data set into three pieces: a training set (60%) to train our models, a cross-validation set (20%) to assess and optimize the performance of the model, and a testing set (20%) to estimate the final performance.
+
+```{r cache=TRUE}
+inTrain<-createDataPartition(y=data$classe,p=0.6,list=FALSE)
+training<-data[inTrain,]
+testing<-data[-inTrain,]
+incv<-createDataPartition(y=testing$classe,p=0.5,list=FALSE)
+crossval<-testing[incv,]
+testing<-testing[-incv,]
+
+```
+
+## Results
+
+Now we will build and test our model. Three methods were tested: random forests, boosted trees, and support vector machines (SVM). The SVM clearly gave the best performance out of the box, with an accuracy of around 95%. The random forest and boosted accuracies were much lower at around 80%, and also took much more time to train. We will only show results obtained with the SVM in this report.
+
+To assess and optimize the performance of the SVM, we will plot the learning curve, i.e. the accuracy as a function of the number of samples used to train the model. We do this for two separate cases: one where all parameters are left at their default values, and one where the `cost` parameter is set to 100 instead of 1 (the default). Higher values of `cost` allow the SVM to build more complex prediction functions.
+
+```{r cache=TRUE}
+samplefrac<-seq(0.1,1,0.1)
+trainacc<-c()
+cvacc<-c()
+trainacc2<-c()
+cvacc2<-c()
+for (i in samplefrac) {
+   insub<-createDataPartition(y=training$classe,p=i,list=FALSE)
+   subtrain<-training[insub,]
+   modelfit<-svm(subtrain$classe~.,data=subtrain)
+   trainacc<-c(trainacc,sum(predict(modelfit,subtrain)==subtrain$classe)/nrow(subtrain))
+   cvacc<-c(cvacc,sum(predict(modelfit,crossval)==crossval$classe)/nrow(crossval))
+   modelfit<-svm(subtrain$classe~.,data=subtrain,cost=100)
+   trainacc2<-c(trainacc2,sum(predict(modelfit,subtrain)==subtrain$classe)/nrow(subtrain))
+   cvacc2<-c(cvacc2,sum(predict(modelfit,crossval)==crossval$classe)/nrow(crossval))
+}
+```
+
+```{r}
+par(mfrow=c(1,2))
+
+plot(samplefrac,trainacc,ylim=c(0.8,1),xlab="Sample fraction used for training",ylab="Accuracy",col="red",pch=19,main="cost=1")
+points(samplefrac,cvacc,col="blue",pch=19)
+legend('bottomright',c("training","cross-validation"),col=c('red','blue'),lty=1,lwd=2,bty='n')
+#text('middle',c("cost=1"))
+
+plot(samplefrac,trainacc2,ylim=c(0.8,1),xlab="Sample fraction used for training",ylab="Accuracy",col="red",pch=19,main="cost=100")
+points(samplefrac,cvacc2,col="blue",pch=19)
+legend('bottomright',c("training","cross-validation"),col=c('red','blue'),lty=1,lwd=2,bty='n')
+```
+
+In the plots we see that setting the `cost` parameter to 100 improves the accuracy from ~95% to more than 99%. There are clear signs of overtraining when using a small number of samples for the training, but this problem is fixed when using the full training sample.
+
+Now we train our selected model (i.e. SVM with `cost` set to 100) using the full training data set, to obtain the final model. We then calculate its accuracy with the testing set, which we didn't look at until now.
+
+```{r cache=TRUE}
+modelfit<-svm(training$classe~.,data=training,cost=100)
+cm<-confusionMatrix(testing$classe,predict(modelfit,testing))
+cm$overall
+```
+The performance is very similar to that obtained with the cross-validation set: the accuracy is more than 99%.
